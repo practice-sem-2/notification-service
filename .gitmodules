@@ -1,0 +1,4 @@
+[submodule "proto"]
+	path = proto
+	branch = updates
+	url = git@github.com:practice-sem-2/proto.git
