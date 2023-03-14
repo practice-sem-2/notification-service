@@ -2,10 +2,12 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"github.com/Shopify/sarama"
 	"github.com/practice-sem-2/notification-service/internal/pb"
 	"github.com/sirupsen/logrus"
 	"github.com/zyedidia/generic/multimap"
+	"google.golang.org/protobuf/proto"
 	"sync"
 )
 
@@ -14,76 +16,120 @@ const readerBufferSize = 16
 
 type Worker func()
 
-type NotificationReader struct {
-	id     int64
-	store  *NotificationStore
-	reader chan pb.Notification
+type NotificationListener struct {
+	UserID   string
+	store    *NotificationStore
+	listener chan *pb.Notification
 }
 
-func (r *NotificationReader) Iter() <-chan pb.Notification {
-	return r.reader
+func (l *NotificationListener) Notifications() <-chan *pb.Notification {
+	return l.listener
 }
 
-func (r *NotificationReader) Close() {
-
+// Detach cancels listening and closes the listener channel
+func (l *NotificationListener) Detach() {
+	l.store.detach(l)
 }
 
 type NotificationStore struct {
-	consumer sarama.ConsumerGroup
-	readers  multimap.MultiMap[string, chan pb.Notification]
-	wg       *sync.WaitGroup
-	logger   *logrus.Logger
-	ctx      context.Context
+	rm        sync.RWMutex
+	consumer  sarama.ConsumerGroup
+	listeners multimap.MultiMap[string, chan *pb.Notification]
+	logger    *logrus.Logger
 }
 
-func NewNotificationStorage(consumer sarama.ConsumerGroup, logger *logrus.Logger) (*NotificationStore, error) {
-	wg := &sync.WaitGroup{}
-
+func NewNotificationStorage(consumer sarama.ConsumerGroup, logger *logrus.Logger) *NotificationStore {
 	store := &NotificationStore{
-		consumer: consumer,
-		readers:  multimap.NewMapSlice[string, chan pb.Notification](),
-		wg:       wg,
-		logger:   logger,
+		consumer:  consumer,
+		listeners: multimap.NewMapSlice[string, chan *pb.Notification](),
+		logger:    logger,
 	}
-
-	c := Consumer{
-		store: store,
-	}
-	err := consumer.Consume(store.ctx, []string{"notifications"}, &c)
 	return store
 }
 
-func (s *NotificationStore) Run() {
-
+func (s *NotificationStore) Notify(userID string, msg *pb.Notification) {
+	s.rm.RLock()
+	for _, reader := range s.listeners.Get(userID) {
+		reader <- msg
+	}
+	defer s.rm.RUnlock()
 }
 
-// Listen TODO replace pb.Notification with domain specific model
-func (s *NotificationStore) Listen(userID string) <-chan pb.Notification {
-	reader := make(chan pb.Notification, readerBufferSize)
-	s.readers.Put(userID, reader)
-	return reader
+func (s *NotificationStore) detach(listener *NotificationListener) {
+	s.rm.Lock()
+	defer s.rm.Unlock()
+	s.listeners.Remove(listener.UserID, listener.listener)
+	close(listener.listener)
 }
 
-func (s *NotificationStore) Close() {
-	s.done <- struct{}{}
-	s.wg.Wait()
+func (s *NotificationStore) Run(ctx context.Context) error {
+	c := Consumer{
+		store: s,
+	}
+	for {
+		err := s.consumer.Consume(ctx, []string{"notifications"}, &c)
+
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+
+		s.logger.
+			WithField("error", err.Error()).
+			Errorf("consuming error occured")
+	}
+}
+
+// Listen returns a channel contains all notification connected to userID.
+// TODO: replace pb.Notification with domain specific model
+func (s *NotificationStore) Listen(userID string) NotificationListener {
+	s.rm.Lock()
+	defer s.rm.Unlock()
+	listener := make(chan *pb.Notification, readerBufferSize)
+	s.listeners.Put(userID, listener)
+	return NotificationListener{
+		UserID:   userID,
+		store:    s,
+		listener: listener,
+	}
 }
 
 type Consumer struct {
 	store *NotificationStore
 }
 
-func (c *Consumer) Setup(session sarama.ConsumerGroupSession) error {
-	//TODO implement me
-	panic("implement me")
+func (c *Consumer) Setup(_ sarama.ConsumerGroupSession) error {
+	// Nothing to do...
+	return nil
 }
 
-func (c *Consumer) Cleanup(session sarama.ConsumerGroupSession) error {
-	//TODO implement me
-	panic("implement me")
+func (c *Consumer) Cleanup(_ sarama.ConsumerGroupSession) error {
+	// Nothing to do...
+	return nil
 }
 
 func (c *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	//TODO implement me
-	panic("implement me")
+
+	for {
+		select {
+		case msg, ok := <-claim.Messages():
+
+			if !ok {
+				return nil
+			}
+
+			notification := &pb.Notification{}
+			err := proto.Unmarshal(msg.Value, notification)
+			if err == nil {
+				c.store.Notify(string(msg.Key), notification)
+			} else {
+				c.store.logger.
+					WithField("error", err.Error()).
+					Errorf("notification has invalid format")
+			}
+			session.MarkMessage(msg, "")
+		case <-session.Context().Done():
+			return nil
+		}
+
+	}
 }

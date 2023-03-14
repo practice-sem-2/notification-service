@@ -1,9 +1,11 @@
 package usecase
 
 type UseCase struct {
+	Notifications *NotificationsUseCase
 }
 
-func NewUseCase() *UseCase {
-	//TODO implement me
-	panic("implement me")
+func NewUseCase(notifications *NotificationsUseCase) *UseCase {
+	return &UseCase{
+		Notifications: notifications,
+	}
 }

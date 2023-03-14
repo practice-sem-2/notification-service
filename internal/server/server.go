@@ -7,11 +7,13 @@ import (
 
 type NotificationsServer struct {
 	pb.UnimplementedNotificationsServer
+	ucase *usecase.UseCase
 }
 
 func NewNotificationServer(ucase *usecase.UseCase) *NotificationsServer {
-	//TODO implement me
-	panic("implement me")
+	return &NotificationsServer{
+		ucase: ucase,
+	}
 }
 
 func (n *NotificationsServer) Listen(r *pb.ListenRequest, server pb.Notifications_ListenServer) error {
