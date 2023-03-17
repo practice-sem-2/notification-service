@@ -15,7 +15,6 @@ services:
       - 8080:80
     depends_on:
       - kafka-1
-      - kafka-2
     networks:
       - backend
 
@@ -36,35 +35,12 @@ services:
     container_name: kafka-1
     ports:
       - 9092:9092
-#    volumes:
-#      - kafka-data:/bitnami
-#      - kafka-log:/tmp/kafka_mounts/logs
     environment:
       - KAFKA_BROKER_ID=1
       - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
-      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
-#      - KAFKA_CFG_LOG_DIRS=/tmp/kafka_mounts/logs
-      - ALLOW_PLAINTEXT_LISTENER=yes
-    depends_on:
-      - zookeeper
-    networks:
-      - backend
-
-  kafka-2:
-    image: 'bitnami/kafka:2.5.0'
-    container_name: kafka-2
-    ports:
-      - 9093:9093
-#    volumes:
-#      - kafka-data-second:/bitnami
-#      - kafka-log-second:/tmp/kafka_mounts/logs
-    environment:
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9093
-      - KAFKA_BROKER_ID=2
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka-1:9092
       - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
       - ALLOW_PLAINTEXT_LISTENER=yes
-#      - KAFKA_CFG_LOG_DIRS=/tmp/kafka_mounts/logs
-      - KAFKA_BROKER_LIST=kafka-1:2181
     depends_on:
       - zookeeper
     networks:
@@ -72,7 +48,3 @@ services:
 
 volumes:
   zookeeper:
-  kafka-data:
-  kafka-log:
-  kafka-data-second:
-  kafka-log-second:
