@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"github.com/Shopify/sarama"
 	_ "github.com/jackc/pgx/stdlib"
 	"github.com/practice-sem-2/notification-service/internal/pb"
 	"github.com/practice-sem-2/notification-service/internal/server"
+	"github.com/practice-sem-2/notification-service/internal/storage"
 	"github.com/practice-sem-2/notification-service/internal/usecase"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -14,6 +17,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
@@ -55,6 +59,37 @@ func initServer(address string, useCases *usecase.UseCase, logger *logrus.Logger
 	return grpcServer, listener
 }
 
+func initConsumerGroup(logger *logrus.Logger) sarama.ConsumerGroup {
+	brokers := strings.Split(viper.GetString("KAFKA_BROKERS"), ",")
+
+	if len(brokers) == 0 {
+		logger.Fatalf("KAFKA_BROKERS must be defined")
+	}
+
+	topic := viper.GetString("KAFKA_NOTIFICATIONS_TOPIC")
+
+	if topic == "" {
+		logger.Fatalf("KAFKA_NOTIFICATIONS_TOPIC must be defined")
+	}
+
+	config := sarama.NewConfig()
+	group, err := sarama.NewConsumerGroup(brokers, topic, config)
+
+	if err != nil {
+		logger.
+			WithField("error", err.Error()).
+			Fatalf("can't create consumer group")
+	}
+
+	return group
+}
+
+func initNotificationStore(logger *logrus.Logger) *storage.NotificationStore {
+	group := initConsumerGroup(logger)
+	store := storage.NewNotificationStorage(group, logger)
+	return store
+}
+
 func main() {
 	viper.AutomaticEnv()
 	ctx := context.Background()
@@ -71,8 +106,18 @@ func main() {
 	flag.Parse()
 
 	logger := initLogger(logLevel)
+	store := initNotificationStore(logger)
+	go func() {
+		err := store.Run(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.
+				WithField("error", err).
+				Error("store listening ended with error")
+		}
+	}()
 
-	useCases := usecase.NewUseCase()
+	notificationUseCase := usecase.NewNotificationUseCase(store)
+	useCases := usecase.NewUseCase(notificationUseCase)
 
 	address := fmt.Sprintf("%s:%d", host, port)
 	srv, lis := initServer(address, useCases, logger)
