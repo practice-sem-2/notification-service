@@ -2,7 +2,7 @@ package auth
 
 import (
 	"context"
-	"crypto/ecdsa"
+	"crypto/rsa"
 	"errors"
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc/metadata"
@@ -16,6 +16,7 @@ var (
 	ErrInvalidToken = errors.New("provided token is invalid")
 	ErrBadContext   = errors.New("can't retrieve metadata from context")
 	ErrNoAuth       = errors.New("token is not provided")
+	ErrTokenExpired = errors.New("provided token has expired")
 )
 
 type UserClaims struct {
@@ -28,12 +29,12 @@ type UserClaims struct {
 }
 
 type Service struct {
-	privateKey *ecdsa.PrivateKey
-	publicKey  ecdsa.PublicKey
+	privateKey *rsa.PrivateKey
+	publicKey  rsa.PublicKey
 }
 
-func New(privateKeyRaw []byte) (*Service, error) {
-	privateKey, err := jwt.ParseECPrivateKeyFromPEM(privateKeyRaw)
+func NewFromPem(privateKeyRaw []byte) (*Service, error) {
+	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM(privateKeyRaw)
 
 	if err != nil {
 		return nil, err
@@ -50,7 +51,7 @@ func NewFromFile(privateKeyPath string) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return New(privateKeyRaw)
+	return NewFromPem(privateKeyRaw)
 }
 
 func MustNewFromFile(privateKeyPath string) *Service {
@@ -84,23 +85,29 @@ func (a *Service) GetUser(ctx context.Context) (*UserClaims, error) {
 func (a *Service) ParseToken(token string) (*UserClaims, error) {
 
 	tokenData, err := jwt.ParseWithClaims(token, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, ErrInvalidToken
 		}
-		return a.publicKey, nil
+		return &a.publicKey, nil
 	})
+
+	if errors.Is(err, jwt.ErrTokenExpired) {
+		return nil, ErrTokenExpired
+	}
 
 	if err != nil {
 		return nil, err
 	}
+
 	if claims, ok := tokenData.Claims.(*UserClaims); ok && tokenData.Valid {
 		return claims, nil
 	}
-	return nil, err
+
+	return nil, ErrInvalidToken
 }
 
 func (a *Service) SignToken(claims *UserClaims) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	ss, err := token.SignedString(a.privateKey)
 	if err != nil {
 		return "", err
