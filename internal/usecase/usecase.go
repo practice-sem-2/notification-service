@@ -3,11 +3,13 @@ package usecase
 import "github.com/practice-sem-2/auth-tools"
 
 type UseCase struct {
-	Verifier *auth.VerifierService
+	Verifier      *auth.VerifierService
+	Notifications *NotificationsUseCase
 }
 
-func NewUseCase(verifier *auth.VerifierService) *UseCase {
+func NewUseCase(notifications *NotificationsUseCase, verifier *auth.VerifierService) *UseCase {
 	return &UseCase{
-		Verifier: verifier,
+		Notifications: notifications,
+		Verifier:      verifier,
 	}
 }
