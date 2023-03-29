@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	_ "github.com/jackc/pgx/stdlib"
+	"github.com/practice-sem-2/auth-tools"
 	"github.com/practice-sem-2/notification-service/internal/pb"
 	"github.com/practice-sem-2/notification-service/internal/server"
 	"github.com/practice-sem-2/notification-service/internal/usecase"
@@ -72,7 +73,8 @@ func main() {
 
 	logger := initLogger(logLevel)
 
-	useCases := usecase.NewUseCase()
+	verifier, err := auth.NewVerifierFromFile(viper.GetString("JWT_PUBLIC_KEY_PATH"))
+	useCases := usecase.NewUseCase(verifier)
 
 	address := fmt.Sprintf("%s:%d", host, port)
 	srv, lis := initServer(address, useCases, logger)
@@ -93,7 +95,7 @@ func main() {
 		}
 	}(ctx)
 
-	err := srv.Serve(lis)
+	err = srv.Serve(lis)
 	if err != nil {
 		logger.Fatalf("grpc serving error: %s", err.Error())
 	}

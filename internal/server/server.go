@@ -7,14 +7,15 @@ import (
 
 type NotificationsServer struct {
 	pb.UnimplementedNotificationsServer
+	ucases *usecase.UseCase
 }
 
-func NewNotificationServer(ucase *usecase.UseCase) *NotificationsServer {
-	//TODO implement me
-	panic("implement me")
+func NewNotificationServer(ucases *usecase.UseCase) *NotificationsServer {
+	return &NotificationsServer{
+		ucases: ucases,
+	}
 }
 
-func (n *NotificationsServer) Listen(r *pb.ListenRequest, server pb.Notifications_ListenServer) error {
-	//TODO implement me
-	panic("implement me")
+func (s *NotificationsServer) Listen(r *pb.ListenRequest, server pb.Notifications_ListenServer) error {
+	panic("Unimplemented")
 }

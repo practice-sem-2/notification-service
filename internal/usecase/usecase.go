@@ -1,9 +1,13 @@
 package usecase
 
+import "github.com/practice-sem-2/auth-tools"
+
 type UseCase struct {
+	Verifier *auth.VerifierService
 }
 
-func NewUseCase() *UseCase {
-	//TODO implement me
-	panic("implement me")
+func NewUseCase(verifier *auth.VerifierService) *UseCase {
+	return &UseCase{
+		Verifier: verifier,
+	}
 }
