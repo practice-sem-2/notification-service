@@ -8,7 +8,7 @@ import (
 	"github.com/Shopify/sarama"
 	_ "github.com/jackc/pgx/stdlib"
 	"github.com/practice-sem-2/auth-tools"
-	"github.com/practice-sem-2/notification-service/internal/pb"
+	"github.com/practice-sem-2/notification-service/internal/pb/notify"
 	"github.com/practice-sem-2/notification-service/internal/server"
 	"github.com/practice-sem-2/notification-service/internal/storage"
 	"github.com/practice-sem-2/notification-service/internal/usecase"
@@ -55,39 +55,43 @@ func initServer(address string, useCases *usecase.UseCase, logger *logrus.Logger
 	}
 
 	grpcServer := grpc.NewServer()
-	pb.RegisterNotificationsServer(grpcServer, server.NewNotificationServer(useCases))
+	notify.RegisterNotificationsServer(grpcServer, server.NewNotificationServer(useCases))
 
 	return grpcServer, listener
 }
 
-func initConsumerGroup(logger *logrus.Logger) sarama.ConsumerGroup {
+func initUpdatesConsumers(logger *logrus.Logger) []storage.Consumer {
 	brokers := strings.Split(viper.GetString("KAFKA_BROKERS"), ",")
 
 	if len(brokers) == 0 {
 		logger.Fatalf("KAFKA_BROKERS must be defined")
 	}
 
-	topic := viper.GetString("KAFKA_NOTIFICATIONS_TOPIC")
+	topicsList := viper.GetString("KAFKA_TOPICS")
 
-	if topic == "" {
+	if topicsList == "" {
 		logger.Fatalf("KAFKA_NOTIFICATIONS_TOPIC must be defined")
 	}
 
+	topics := strings.Split(topicsList, ",")
+
 	config := sarama.NewConfig()
-	group, err := sarama.NewConsumerGroup(brokers, topic, config)
-
-	if err != nil {
-		logger.
-			WithField("error", err.Error()).
-			Fatalf("can't create consumer group")
+	consumers := make([]storage.Consumer, len(topics))
+	for i, t := range topics {
+		c, err := sarama.NewConsumer(brokers, config)
+		if err != nil {
+			logger.
+				WithField("error", err.Error()).
+				Fatalf("can't create consumer")
+		}
+		consumers[i] = storage.NewUpdatesConsumer(c, t, logger)
 	}
-
-	return group
+	return consumers
 }
 
 func initNotificationStore(logger *logrus.Logger) *storage.NotificationStore {
-	group := initConsumerGroup(logger)
-	store := storage.NewNotificationStorage(group, logger)
+	consumers := initUpdatesConsumers(logger)
+	store := storage.NewNotificationStorage(logger, consumers...)
 	return store
 }
 

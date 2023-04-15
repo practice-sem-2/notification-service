@@ -4,8 +4,8 @@ go 1.19
 
 require (
 	github.com/Shopify/sarama v1.38.1
+	github.com/google/uuid v1.3.0
 	github.com/jackc/pgx v3.6.2+incompatible
-	github.com/magiconair/properties v1.8.7
 	github.com/practice-sem-2/auth-tools v0.0.0-20230329213852-2132980d6098
 	github.com/sirupsen/logrus v1.9.0
 	github.com/spf13/viper v1.15.0
@@ -38,6 +38,7 @@ require (
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/klauspost/compress v1.15.14 // indirect
 	github.com/lib/pq v1.2.0 // indirect
+	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.6 // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect

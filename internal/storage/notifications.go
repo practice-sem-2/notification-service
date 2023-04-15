@@ -2,12 +2,9 @@ package storage
 
 import (
 	"context"
-	"errors"
-	"github.com/Shopify/sarama"
-	"github.com/practice-sem-2/notification-service/internal/pb"
+	"github.com/practice-sem-2/notification-service/internal/models"
 	"github.com/sirupsen/logrus"
 	"github.com/zyedidia/generic/multimap"
-	"google.golang.org/protobuf/proto"
 	"sync"
 )
 
@@ -19,10 +16,10 @@ type Worker func()
 type NotificationListener struct {
 	UserID   string
 	store    *NotificationStore
-	listener chan *pb.Notification
+	listener chan models.Update
 }
 
-func (l *NotificationListener) Notifications() <-chan *pb.Notification {
+func (l *NotificationListener) Notifications() <-chan models.Update {
 	return l.listener
 }
 
@@ -31,23 +28,27 @@ func (l *NotificationListener) Detach() {
 	l.store.detach(l)
 }
 
+type Consumer interface {
+	Run(ctx context.Context, updates chan<- models.Update) error
+}
+
 type NotificationStore struct {
 	rm        sync.RWMutex
-	consumer  sarama.ConsumerGroup
-	listeners multimap.MultiMap[string, chan *pb.Notification]
+	consumers []Consumer
+	listeners multimap.MultiMap[string, chan models.Update]
 	logger    *logrus.Logger
 }
 
-func NewNotificationStorage(consumer sarama.ConsumerGroup, logger *logrus.Logger) *NotificationStore {
+func NewNotificationStorage(logger *logrus.Logger, consumers ...Consumer) *NotificationStore {
 	store := &NotificationStore{
-		consumer:  consumer,
-		listeners: multimap.NewMapSlice[string, chan *pb.Notification](),
+		consumers: consumers,
+		listeners: multimap.NewMapSlice[string, chan models.Update](),
 		logger:    logger,
 	}
 	return store
 }
 
-func (s *NotificationStore) Notify(userID string, msg *pb.Notification) {
+func (s *NotificationStore) Notify(userID string, msg models.Update) {
 	s.rm.RLock()
 	for _, reader := range s.listeners.Get(userID) {
 		reader <- msg
@@ -63,73 +64,54 @@ func (s *NotificationStore) detach(listener *NotificationListener) {
 }
 
 func (s *NotificationStore) Run(ctx context.Context) error {
-	c := Consumer{
-		store: s,
+	var wg sync.WaitGroup
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	upds := make(chan models.Update, readerBufferSize)
+	go s.fanOutUpdates(ctx, upds)
+	for _, cons := range s.consumers {
+		wg.Add(1)
+		go func(c Consumer) {
+			err := c.Run(ctx, upds)
+
+			if err != nil {
+				s.logger.Errorf("one of consumers failed with error: %v", err)
+			}
+		}(cons)
 	}
+
+	wg.Wait()
+	close(upds)
+	return nil
+}
+
+func (s *NotificationStore) fanOutUpdates(ctx context.Context, upds chan models.Update) {
 	for {
-		err := s.consumer.Consume(ctx, []string{"notifications"}, &c)
-
-		if errors.Is(err, context.Canceled) {
-			return err
+		select {
+		case _ = <-ctx.Done():
+			break
+		case upd, ok := <-upds:
+			if !ok {
+				break
+			}
+			for _, dest := range upd.GetAudience() {
+				s.Notify(dest, upd)
+			}
 		}
-
-		s.logger.
-			WithField("error", err.Error()).
-			Errorf("consuming error occured")
 	}
 }
 
 // Listen returns a channel contains all notification connected to userID.
-// TODO: replace pb.Notification with domain specific model
 func (s *NotificationStore) Listen(userID string) NotificationListener {
 	s.rm.Lock()
 	defer s.rm.Unlock()
-	listener := make(chan *pb.Notification, readerBufferSize)
+	listener := make(chan models.Update, readerBufferSize)
 	s.listeners.Put(userID, listener)
 	return NotificationListener{
 		UserID:   userID,
 		store:    s,
 		listener: listener,
-	}
-}
-
-type Consumer struct {
-	store *NotificationStore
-}
-
-func (c *Consumer) Setup(_ sarama.ConsumerGroupSession) error {
-	// Nothing to do...
-	return nil
-}
-
-func (c *Consumer) Cleanup(_ sarama.ConsumerGroupSession) error {
-	// Nothing to do...
-	return nil
-}
-
-func (c *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-
-	for {
-		select {
-		case msg, ok := <-claim.Messages():
-
-			if !ok {
-				return nil
-			}
-
-			notification := &pb.Notification{}
-			err := proto.Unmarshal(msg.Value, notification)
-			if err == nil {
-				c.store.Notify(string(msg.Key), notification)
-			} else {
-				c.store.logger.
-					WithField("error", err.Error()).
-					Errorf("notification has invalid format")
-			}
-			session.MarkMessage(msg, "")
-		case <-session.Context().Done():
-			return nil
-		}
-
 	}
 }
