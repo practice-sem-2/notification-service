@@ -31,6 +31,7 @@ func NewUpdatesConsumer(c sarama.Consumer, topic string, l *logrus.Logger) *Upda
 }
 
 func (c *UpdatesConsumer) Run(ctx context.Context, updates chan<- models.Update) error {
+	c.logger.Infof("Running consumer for topic %s", c.topic)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -44,7 +45,9 @@ func (c *UpdatesConsumer) Run(ctx context.Context, updates chan<- models.Update)
 	}
 
 	for _, part := range partitions {
+		c.logger.Infof("Creating logger for partition %d", part)
 		cons, err := c.consumer.ConsumePartition(c.topic, part, sarama.OffsetNewest)
+
 		if err != nil {
 			return err
 		}
@@ -54,13 +57,16 @@ func (c *UpdatesConsumer) Run(ctx context.Context, updates chan<- models.Update)
 			for {
 				select {
 				case _ = <-ctx.Done():
+					c.logger.Infof("Closing consumer for partition")
 					cons.AsyncClose()
 					break
 				case msg, ok := <-cons.Messages():
+
 					if !ok {
 						break
 					}
 					upd, err := parseUpdate(msg)
+					c.logger.Infof("Consumed message with key %s", msg.Key)
 					if err != nil {
 						c.logger.Errorf("error occurred while parsing message %v:", err)
 					}

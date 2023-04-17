@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func initLogger(level string) *logrus.Logger {
@@ -55,7 +56,7 @@ func initServer(address string, useCases *usecase.UseCase, logger *logrus.Logger
 	}
 
 	grpcServer := grpc.NewServer()
-	notify.RegisterNotificationsServer(grpcServer, server.NewNotificationServer(useCases))
+	notify.RegisterNotificationsServer(grpcServer, server.NewNotificationServer(useCases, logger))
 
 	return grpcServer, listener
 }
@@ -70,12 +71,16 @@ func initUpdatesConsumers(logger *logrus.Logger) []storage.Consumer {
 	topicsList := viper.GetString("KAFKA_TOPICS")
 
 	if topicsList == "" {
-		logger.Fatalf("KAFKA_NOTIFICATIONS_TOPIC must be defined")
+		logger.Fatalf("KAFKA_TOPICS must be defined")
 	}
 
 	topics := strings.Split(topicsList, ",")
 
 	config := sarama.NewConfig()
+	config.Consumer.Fetch.Max = 10
+	config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	config.Consumer.Offsets.AutoCommit.Enable = false
+	config.Consumer.Offsets.AutoCommit.Interval = 30 * time.Second
 	consumers := make([]storage.Consumer, len(topics))
 	for i, t := range topics {
 		c, err := sarama.NewConsumer(brokers, config)
@@ -86,6 +91,7 @@ func initUpdatesConsumers(logger *logrus.Logger) []storage.Consumer {
 		}
 		consumers[i] = storage.NewUpdatesConsumer(c, t, logger)
 	}
+
 	return consumers
 }
 
@@ -112,6 +118,7 @@ func main() {
 
 	logger := initLogger(logLevel)
 	store := initNotificationStore(logger)
+
 	go func() {
 		err := store.Run(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -121,7 +128,13 @@ func main() {
 		}
 	}()
 
-	verifier, err := auth.NewVerifierFromFile(viper.GetString("JWT_PUBLIC_KEY_PATH"))
+	publicKeyPath := viper.GetString("JWT_PUBLIC_KEY_PATH")
+	verifier, err := auth.NewVerifierFromFile(publicKeyPath)
+	if err != nil {
+		logger.
+			WithField("key_path", publicKeyPath).
+			Fatalf("can't create verifier: %s", err.Error())
+	}
 	notificationUseCase := usecase.NewNotificationUseCase(store)
 	useCases := usecase.NewUseCase(notificationUseCase, verifier)
 

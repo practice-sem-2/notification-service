@@ -2,9 +2,11 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/practice-sem-2/notification-service/internal/models"
 	"github.com/sirupsen/logrus"
 	"github.com/zyedidia/generic/multimap"
+	"strings"
 	"sync"
 )
 
@@ -49,6 +51,10 @@ func NewNotificationStorage(logger *logrus.Logger, consumers ...Consumer) *Notif
 }
 
 func (s *NotificationStore) Notify(userID string, msg models.Update) {
+	data, _ := json.Marshal(msg)
+	s.logger.
+		WithField("update", string(data)).
+		Infof("Notifying %s", userID)
 	s.rm.RLock()
 	for _, reader := range s.listeners.Get(userID) {
 		reader <- msg
@@ -61,9 +67,11 @@ func (s *NotificationStore) detach(listener *NotificationListener) {
 	defer s.rm.Unlock()
 	s.listeners.Remove(listener.UserID, listener.listener)
 	close(listener.listener)
+	s.logger.Infof("Listener of %s detached", listener.UserID)
 }
 
 func (s *NotificationStore) Run(ctx context.Context) error {
+	s.logger.Info("Running the store")
 	var wg sync.WaitGroup
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -94,9 +102,12 @@ func (s *NotificationStore) fanOutUpdates(ctx context.Context, upds chan models.
 			break
 		case upd, ok := <-upds:
 			if !ok {
+				s.logger.Warn("Updates channel closed. Stop notifying clients")
 				break
 			}
+			s.logger.Infof("New updates for audience: %s", strings.Join(upd.GetAudience(), ","))
 			for _, dest := range upd.GetAudience() {
+				s.logger.Infof("Notifying %s", dest)
 				s.Notify(dest, upd)
 			}
 		}
@@ -109,6 +120,7 @@ func (s *NotificationStore) Listen(userID string) NotificationListener {
 	defer s.rm.Unlock()
 	listener := make(chan models.Update, readerBufferSize)
 	s.listeners.Put(userID, listener)
+	s.logger.Infof("Created listener for %s", userID)
 	return NotificationListener{
 		UserID:   userID,
 		store:    s,
