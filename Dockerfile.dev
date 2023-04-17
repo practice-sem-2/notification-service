@@ -1,10 +1,15 @@
 FROM golang:1.19-alpine3.17
 
+ARG GITHUB_USERNAME
+ARG GITHUB_API_KEY
+
 WORKDIR /app
 
 COPY . .
 
-RUN go mod download -x
+RUN apk add git \
+#    && echo "machine github.com login $GITHUB_USERNAME password $GITHUB_API_KEY" >> ~/.netrc \
+    && go mod download -x
 RUN go install github.com/cosmtrek/air@latest
 
 CMD air
